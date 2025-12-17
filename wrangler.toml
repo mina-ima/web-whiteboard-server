@@ -1,0 +1,12 @@
+name = "web-whiteboard-signaling"
+main = "src/worker.js"
+compatibility_date = "2023-01-01"
+
+[[durable_objects.bindings]]
+name = "WHITEBOARD_ROOMS_V2"
+class_name = "WhiteboardRoom"
+
+
+[[migrations]]
+tag = "v1"
+new_classes = ["WhiteboardRoom"]

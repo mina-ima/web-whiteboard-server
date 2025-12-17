@@ -14,6 +14,7 @@
     *   すべてのHTTPリクエストの受付窓口。
     *   リクエストURLから`room`名を抽出（`?room=...` または `/websocket/<room>`）し、適切なDurable Objectインスタンスへリクエストを転送します。
     *   WebSocket以外のリクエストは `200 OK` を返します（ヘルスチェック用途）。
+    *   `/ai/brainstorm` と `/ai/analyze` のHTTP POSTを受け取り、Gemini API へのプロキシとして動作します。
 
 *   **Durable Object (`WhiteboardRoom`)**:
     *   各ルーム（例：`room=my-room-1`）ごとにユニークなインスタンスが生成されるステートフルなオブジェクトです。
@@ -74,6 +75,16 @@
 *   `401 Unauthorized`: 既存ルームへの接続時に`passcode`が間違っている場合。
 *   `426 Upgrade Required`: リクエストヘッダーがWebSocketへのアップグレードを示していない場合。
 *   `200 OK`: WebSocket以外の通常HTTPリクエスト（ヘルスチェック等）。
+*   `500 Internal Server Error`: Gemini API キーが未設定、またはAIプロキシ内部エラー。
+
+#### 7. AI プロキシ (任意機能)
+
+AI機能はクライアントから直接APIキーを扱わないため、Worker側でGemini APIへのプロキシを提供します。
+
+* **環境変数**: `GEMINI_API_KEY`
+* **エンドポイント**:
+  * `POST /ai/brainstorm` - body: `{ "topic": "..." }` -> response: `{ "ideas": string[] }`
+  * `POST /ai/analyze` - body: `{ "imageData": "data:image/png;base64,..." }` -> response: `{ "text": string }`
 
 #### 6. テスト計画
 

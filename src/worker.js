@@ -195,6 +195,7 @@ export class WhiteboardRoom {
 }
 
 const WEBSOCKET_PATH = 'websocket';
+const AI_PATH_PREFIX = 'ai';
 
 const isWebSocketUpgrade = (request) =>
   request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
@@ -216,6 +217,146 @@ const getRoomNameFromPath = (pathname) => {
 const getRoomName = (url) =>
   url.searchParams.get('room') || getRoomNameFromPath(url.pathname);
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+const jsonResponse = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...CORS_HEADERS,
+      'Content-Type': 'application/json',
+    },
+  });
+
+const readGeminiText = async (response) => {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      data?.error?.message || data?.error || 'Gemini API error';
+    return { ok: false, error: message };
+  }
+  const parts =
+    data?.candidates?.[0]?.content?.parts || [];
+  const text = parts
+    .map((part) => part?.text)
+    .filter(Boolean)
+    .join('');
+  return { ok: true, text };
+};
+
+const parseIdeas = (text) => {
+  if (!text) return [];
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return parsed.map((idea) => String(idea));
+    }
+  } catch {
+    // fallback to line parsing
+  }
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^[-*\d.\s]+/, '').trim())
+    .filter(Boolean);
+};
+
+const handleAiRequest = async (request, env) => {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', {
+      status: 405,
+      headers: CORS_HEADERS,
+    });
+  }
+  if (!env.GEMINI_API_KEY) {
+    return jsonResponse({ error: 'Missing GEMINI_API_KEY' }, 500);
+  }
+
+  const url = new URL(request.url);
+  const payload = await request.json().catch(() => null);
+  if (!payload) {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const apiUrl =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`;
+
+  if (url.pathname === '/ai/brainstorm') {
+    const topic = String(payload.topic || '').trim();
+    if (!topic) {
+      return jsonResponse({ error: 'Missing topic' }, 400);
+    }
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: `Generate 5 short, concise ideas about: "${topic}". Return a JSON array of strings.`,
+            },
+          ],
+        },
+      ],
+    };
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await readGeminiText(response);
+    if (!result.ok) {
+      return jsonResponse({ error: result.error }, response.status);
+    }
+    const ideas = parseIdeas(result.text);
+    return jsonResponse({ ideas });
+  }
+
+  if (url.pathname === '/ai/analyze') {
+    const imageData = String(payload.imageData || '');
+    if (!imageData) {
+      return jsonResponse({ error: 'Missing imageData' }, 400);
+    }
+    const base64Data = imageData.split(',')[1] || imageData;
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                mimeType: 'image/png',
+                data: base64Data,
+              },
+            },
+            {
+              text:
+                'Analyze this whiteboard session. Summarize the key themes found in the drawings and sticky notes. If there are action items, list them. Be concise.',
+            },
+          ],
+        },
+      ],
+    };
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await readGeminiText(response);
+    if (!result.ok) {
+      return jsonResponse({ error: result.error }, response.status);
+    }
+    return jsonResponse({ text: result.text });
+  }
+
+  return jsonResponse({ error: 'Not Found' }, 404);
+};
+
 /**
  * Worker エントリーポイント
  * ★ WebSocket Upgrade を最優先で DO に渡す ★
@@ -232,6 +373,11 @@ export default {
       const id = env.WHITEBOARD_ROOMS_V2.idFromName(roomName);
       const stub = env.WHITEBOARD_ROOMS_V2.get(id);
       return stub.fetch(request);
+    }
+
+    const url = new URL(request.url);
+    if (url.pathname.startsWith(`/${AI_PATH_PREFIX}/`)) {
+      return handleAiRequest(request, env);
     }
 
     return new Response('OK');

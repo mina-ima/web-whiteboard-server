@@ -18,3 +18,15 @@ Cloudflare Workers + Durable Objects based signaling server for Yjs.
 ```sh
 wrangler deploy
 ```
+
+## AI Proxy (Optional)
+
+Set a secret for Gemini in the Worker environment:
+
+```sh
+wrangler secret put GEMINI_API_KEY
+```
+
+AI endpoints:
+- `POST /ai/brainstorm`
+- `POST /ai/analyze`

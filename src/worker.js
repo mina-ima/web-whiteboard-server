@@ -363,6 +363,10 @@ const handleAiRequest = async (request, env) => {
  */
 export default {
   async fetch(request, env) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
     if (isWebSocketUpgrade(request)) {
       const url = new URL(request.url);
       const roomName = getRoomName(url);

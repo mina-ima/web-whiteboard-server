@@ -248,6 +248,39 @@ const readGeminiText = async (response) => {
   return { ok: true, text };
 };
 
+const sleep = (ms) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-1.5-flash'];
+
+const callGeminiWithRetry = async (body, apiKey) => {
+  const retryableStatus = new Set([429, 500, 503]);
+  const retryDelays = [300, 800];
+
+  for (const model of GEMINI_MODELS) {
+    const apiUrl =
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (response.ok) {
+        return response;
+      }
+      if (!retryableStatus.has(response.status) || attempt === retryDelays.length) {
+        return response;
+      }
+      await sleep(retryDelays[attempt]);
+    }
+  }
+  return new Response(
+    JSON.stringify({ error: 'AIが混み合っています。時間をおいて再試行してください。' }),
+    { status: 503, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+  );
+};
+
 const parseIdeas = (text) => {
   if (!text) return [];
   try {
@@ -284,9 +317,6 @@ const handleAiRequest = async (request, env) => {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
-  const apiUrl =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${env.GEMINI_API_KEY}`;
-
   if (url.pathname === '/ai/brainstorm') {
     const topic = String(payload.topic || '').trim();
     if (!topic) {
@@ -304,11 +334,7 @@ const handleAiRequest = async (request, env) => {
         },
       ],
     };
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const response = await callGeminiWithRetry(body, env.GEMINI_API_KEY);
     const result = await readGeminiText(response);
     if (!result.ok) {
       return jsonResponse({ error: result.error }, response.status);
@@ -342,11 +368,7 @@ const handleAiRequest = async (request, env) => {
         },
       ],
     };
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const response = await callGeminiWithRetry(body, env.GEMINI_API_KEY);
     const result = await readGeminiText(response);
     if (!result.ok) {
       return jsonResponse({ error: result.error }, response.status);
